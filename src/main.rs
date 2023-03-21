@@ -1,19 +1,22 @@
-use std::{convert::Infallible, net::SocketAddr, path::Path};
+use std::{collections::HashMap, convert::Infallible, net::SocketAddr, path::Path};
 
 use axum::{
     body::{Body, BoxBody},
-    extract,
-    http::{Request, Response},
+    http::{Request, Response, StatusCode, Uri},
     response::IntoResponse,
     routing::get,
     Router,
 };
+use once_cell::sync::Lazy;
 use tower::ServiceExt;
 use tower_http::services::ServeDir;
 
+static VERB_DIR: Lazy<HashMap<&str, &str>> =
+    Lazy::new(|| HashMap::from([("pouet", "/home/geobert/tmp/tower-servedir-test/www/")]));
+
 #[tokio::main]
 async fn main() {
-    let router = Router::new().route("/*path", get(serve_file));
+    let router = Router::new().fallback_service(get(serve_file));
     let addr = SocketAddr::from(([0, 0, 0, 0], 8080));
     dbg!(
         axum::Server::bind(&addr)
@@ -23,18 +26,20 @@ async fn main() {
     .unwrap();
 }
 
-async fn serve_file(
-    extract::Path(url): extract::Path<String>,
-    req: Request<Body>,
-) -> Result<Response<BoxBody>, Infallible> {
+async fn serve_file(url: Uri, req: Request<Body>) -> Result<Response<BoxBody>, Infallible> {
     // I use `url` to determine which directory to serve, as it is configured somewhere that can be updated
     dbg!(&url);
+    let uri = &url.path()[1..];
+    dbg!(uri);
+    if let Some(&verb) = VERB_DIR.get(uri) {
+        let path = Path::new(verb);
 
-    let path = Path::new("/home/geobert/tmp/tower-servedir-test/www");
+        // read to prove it exists
+        dbg!(&std::fs::read_to_string(path.join("index.html")));
 
-    // read to prove it exists
-    dbg!(&std::fs::read_to_string(path.join("index.html")));
-
-    let service = ServeDir::new(path);
-    Ok(service.oneshot(req).await.into_response())
+        let service = ServeDir::new(path);
+        Ok(service.oneshot(req).await.into_response())
+    } else {
+        return Ok(StatusCode::NOT_FOUND.into_response());
+    }
 }
